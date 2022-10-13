@@ -532,13 +532,16 @@ Parameters in ~OPTIONS~:
              (dest-file
               (expand-file-name
                rendered-output (gethash :output-dir route))))
-        (weblorg--log-info  "copying: %s -> %s" file dest-file)
-        (mkdir (file-name-directory dest-file) t)
-        (condition-case exc
-            (copy-file file dest-file t)
-          (error
-           (if (not (string= (caddr exc) "Success"))
-               (message "error: %s: %s" (car (cddr exc)) (cadr (cddr exc))))))))))
+        (when (or (not (file-exists-p dest-file))
+                  (< (time-convert (file-attribute-modification-time (file-attributes dest-file)) 'integer)
+                     (time-convert (file-attribute-modification-time (file-attributes file)) 'integer)))
+          (weblorg--log-info  "copying: %s -> %s" file dest-file)
+          (mkdir (file-name-directory dest-file) t)
+          (condition-case exc
+              (copy-file file dest-file t)
+            (error
+             (if (not (string= (caddr exc) "Success"))
+                 (message "error: %s: %s" (car (cddr exc)) (cadr (cddr exc)))))))))))
 
 (defun weblorg-export-assets (route)
   "Export static assets ROUTE."
@@ -560,14 +563,16 @@ Parameters in ~OPTIONS~:
              (dest-file
               (expand-file-name
                rendered-output (gethash :output-dir route))))
-        (weblorg--log-info  "copying: %s -> %s" file dest-file)
-        (mkdir (file-name-directory dest-file) t)
-        (condition-case exc
-            (copy-file file dest-file t)
-          (error
-           (if (not (string= (caddr exc) "Success"))
-               (message "error: %s: %s" (car (cddr exc)) (cadr (cddr exc)))))))))
-  )
+        (when (or (not (file-exists-p dest-file))
+                  (< (time-convert (file-attribute-modification-time (file-attributes dest-file)) 'integer)
+                     (time-convert (file-attribute-modification-time (file-attributes file)) 'integer)))
+          (weblorg--log-info  "copying: %s -> %s" file dest-file)
+          (mkdir (file-name-directory dest-file) t)
+          (condition-case exc
+              (copy-file file dest-file t)
+            (error
+             (if (not (string= (caddr exc) "Success"))
+                 (message "error: %s: %s" (car (cddr exc)) (cadr (cddr exc)))))))))))
 
 
 
@@ -1093,10 +1098,18 @@ can be found in the ROUTE."
               (weblorg--render-route-prop route :output (cdar data)))
              ;; Render the full path
              (final-output
-              (expand-file-name rendered-output (gethash :output-dir route))))
-        (weblorg--log-info "writing: %s" final-output)
-        (mkdir (file-name-directory final-output) t)
-        (write-region rendered nil final-output)))))
+              (expand-file-name rendered-output (gethash :output-dir route)))
+             file)
+        (dolist (ap (cdar data))
+          (when (equal (car ap) "file")
+            (setq file (cdr ap))))
+        (when (or (not (file-exists-p final-output))
+                  (not file)
+                  (> (time-convert (file-attribute-modification-time (file-attributes file)) 'integer)
+                     (time-convert (file-attribute-modification-time (file-attributes final-output)) 'integer)))
+          (weblorg--log-info "writing: %s" final-output)
+          (mkdir (file-name-directory final-output) t)
+          (write-region rendered nil final-output))))))
 
 (defun weblorg--render-route-prop (route prop data)
   "Render PROP of ROUTE with DATA as context."
