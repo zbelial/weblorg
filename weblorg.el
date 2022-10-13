@@ -274,6 +274,7 @@ Parameters in ~OPTIONS~:
                     (weblorg-site :base-url weblorg-default-url)))
           ;; Prefix path for most file operations within a route
           (base-dir (weblorg--get opt :base-dir default-directory))
+          (output-dir (weblorg--get opt :output-dir default-directory))
           ;; The default theme of the site is the defacto "default"
           (theme (weblorg--get opt :theme (gethash :theme site))))
 
@@ -281,6 +282,7 @@ Parameters in ~OPTIONS~:
      (puthash :site site route)
      (puthash :url url route)
      (puthash :base-dir base-dir route)
+     (puthash :output-dir output-dir route)
      (puthash :input-source (weblorg--get opt :input-source) route)
      (puthash :input-pattern (weblorg--get opt :input-pattern) route)
      (puthash :input-exclude (weblorg--get opt :input-exclude "^$") route)
@@ -363,6 +365,7 @@ Parameters in ~OPTIONS~:
           (name (weblorg--get opt :name "static"))
           (url (weblorg--get opt :url "/static/{{ file }}"))
           (base-dir (weblorg--get opt :base-dir default-directory))
+          (output-dir (weblorg--get opt :output-dir default-directory))
           (site (or (weblorg--get opt :site)
                     (weblorg-site :base-url weblorg-default-url)))
           ;; The default theme of the site is the defacto "default"
@@ -372,6 +375,7 @@ Parameters in ~OPTIONS~:
      (puthash :site site route)
      (puthash :url url route)
      (puthash :base-dir base-dir route)
+     (puthash :output-dir output-dir route)
      (puthash :theme theme route)
      (puthash :input-pattern (weblorg--get opt :input-pattern "**/*") route)
      (puthash :input-exclude (weblorg--get opt :input-exclude (regexp-opt '("../" "/output"))) route)
@@ -379,6 +383,99 @@ Parameters in ~OPTIONS~:
      (puthash :input-parser #'identity route)
      (puthash :input-aggregate #'identity route)
      (puthash :output (weblorg--get opt :output "output/static/{{ file }}") route)
+     (puthash :export (weblorg--get opt :export #'weblorg-export-static) route)
+     ;; we need a template environment for the static routes because
+     ;; of the rendering of the expressions in the :url and :output
+     ;; parameters
+     (let ((env (templatel-env-new)))
+       (templatel-env-set-autoescape env t)
+       (puthash :template-env env route)
+       (weblorg--route-install-template-filters route))
+     (puthash name route (gethash :routes site))
+     route)))
+
+(defun weblorg-copy-assets (&rest options)
+  "Utility and Route for static assets of a weblorg site.
+
+Use this route if you want either of these two things:
+
+ 1. You want to use a built-in theme and need to copy its assets
+    to the output directory of your site;
+
+ 2. You are want to copy assets of your local theme to the output
+    directory of your site;
+
+Examples:
+
+ 1. Add static route to the default site.  That will allow
+    `url_for' to find the route ~\"static\"~.
+
+    #+BEGIN_SRC emacs-lisp
+    (weblorg-copy-static
+     :output \"output/static/{{ basename }}\"
+     :url \"/static/{{ basename }}\")
+    #+END_SRC
+
+ 2. This example uses a custom site parameter.  The site
+    parameter points to a CDN as its Base URL.
+
+    #+BEGIN_SRC emacs-lisp
+    (weblorg-copy-static
+     :output \"output/public/{{ filename }}\"
+     :url \"/public/{{ filename }}\"
+     :site (weblorg-site
+            :name \"cdn\"
+            :base-url \"https://cdn.example.com\"
+            :theme \"autodoc\"))
+    (weblorg-export)
+    #+END_SRC
+
+Parameters in ~OPTIONS~:
+
+ * *:output* String with a template for generating the output
+   file name.  The variables available are the variables of each
+   item of a collection returned by `:input-aggregate'.
+
+ * *:url* Similarly to the `:output' parameter, it takes a
+   template string as input and returns the URL of an entry of a
+   given entry in this route.
+
+ * *:site* Instance of a weblorg site created by the function
+   [[anchor:symbol-weblorg-site][weblorg-site]].  If not provided, it
+   will use a default value.  The most valuable information a
+   site carries is its base URL, and that's why it's relevant for
+   routes.  That way one can have multiple sites in one single
+   program.
+
+ * *:name* name of the route.  This defaults to ~\"static\"~.
+   Notice that if you are using this function to copy assets from
+   a built-in theme, the template of such a theme will reference
+   the route ~\"static\"~ when including assets.  Which means
+   that you need at least one ~\"static\"~ route in your site."
+  (weblorg--with-error
+   (let* ((opt (seq-partition options 2))
+          (route (make-hash-table))
+          (name (weblorg--get opt :name "assets"))
+          (url (weblorg--get opt :url "/assets/{{ file }}"))
+          (base-dir (weblorg--get opt :base-dir default-directory))
+          (output-dir (weblorg--get opt :output-dir default-directory))
+          (site (or (weblorg--get opt :site)
+                    (weblorg-site :base-url weblorg-default-url)))
+          ;; The default theme of the site is the defacto "default"
+          (theme (weblorg--get opt :theme (gethash :theme site))))
+
+     (puthash :name name route)
+     (puthash :site site route)
+     (puthash :url url route)
+     (puthash :base-dir base-dir route)
+     (puthash :output-dir output-dir route)
+     (puthash :theme theme route)
+     (puthash :input-pattern (weblorg--get opt :input-pattern "**/*") route)
+     (puthash :input-exclude (weblorg--get opt :input-exclude (regexp-opt '("../" "/output"))) route)
+     (puthash :input-filter (weblorg--get opt :input-filter) route)
+     (puthash :input-parser #'identity route)
+     (puthash :input-aggregate #'identity route)
+     (puthash :output (weblorg--get opt :output "output/assets/{{ file }}") route)
      (puthash :export (weblorg--get opt :export #'weblorg-export-assets) route)
      ;; we need a template environment for the static routes because
      ;; of the rendering of the expressions in the :url and :output
@@ -400,7 +497,8 @@ Parameters in ~OPTIONS~:
       ;; interactive export
       (clrhash (gethash :cache site))
       ;; Iterate over each route of a given site
-      (maphash (lambda(_ route) (funcall (gethash :export route) route))
+      (maphash (lambda(_ route)
+                 (funcall (gethash :export route) route))
                (gethash :routes site)))
     weblorg--sites)))
 
@@ -414,7 +512,7 @@ Parameters in ~OPTIONS~:
          (weblorg--route-posts route)
        input-source))))
 
-(defun weblorg-export-assets (route)
+(defun weblorg-export-static (route)
   "Export static assets ROUTE."
   (dolist (path (reverse (weblorg--path route "static")))
     (dolist (file (condition-case nil
@@ -433,7 +531,7 @@ Parameters in ~OPTIONS~:
                (gethash :output route) `(("file" . ,relative-path))))
              (dest-file
               (expand-file-name
-               rendered-output (gethash :base-dir route))))
+               rendered-output (gethash :output-dir route))))
         (weblorg--log-info  "copying: %s -> %s" file dest-file)
         (mkdir (file-name-directory dest-file) t)
         (condition-case exc
@@ -441,6 +539,35 @@ Parameters in ~OPTIONS~:
           (error
            (if (not (string= (caddr exc) "Success"))
                (message "error: %s: %s" (car (cddr exc)) (cadr (cddr exc))))))))))
+
+(defun weblorg-export-assets (route)
+  "Export static assets ROUTE."
+  (dolist (path (reverse (weblorg--assets-path route "")))
+    (dolist (file (condition-case nil
+                      (weblorg--find-source-files
+                       (gethash :name route)
+                       path
+                       (gethash :input-pattern route)
+                       (gethash :input-exclude route))
+                    ;; ignore signaling of no-files-matched
+                    (weblorg-error-config nil)))
+      (let* ((relative-path
+              (replace-regexp-in-string
+               (regexp-quote (file-name-as-directory path)) "" file t t))
+             (rendered-output
+              (templatel-render-string
+               (gethash :output route) `(("file" . ,relative-path))))
+             (dest-file
+              (expand-file-name
+               rendered-output (gethash :output-dir route))))
+        (weblorg--log-info  "copying: %s -> %s" file dest-file)
+        (mkdir (file-name-directory dest-file) t)
+        (condition-case exc
+            (copy-file file dest-file t)
+          (error
+           (if (not (string= (caddr exc) "Success"))
+               (message "error: %s: %s" (car (cddr exc)) (cadr (cddr exc)))))))))
+  )
 
 
 
@@ -738,6 +865,12 @@ consumption from templatel."
         (list site-dir (expand-file-name dir (funcall theme-fn)))
       (list site-dir))))
 
+(defun weblorg--assets-path (route dir)
+  "Factory for making path variables for DIR with ROUTE data."
+  (let ((site-dir (expand-file-name
+                   dir (gethash :base-dir route))))
+    (list site-dir)))
+
 (defun weblorg--theme-dir (theme)
   "Path for THEME.
 
@@ -960,7 +1093,7 @@ can be found in the ROUTE."
               (weblorg--render-route-prop route :output (cdar data)))
              ;; Render the full path
              (final-output
-              (expand-file-name rendered-output (gethash :base-dir route))))
+              (expand-file-name rendered-output (gethash :output-dir route))))
         (weblorg--log-info "writing: %s" final-output)
         (mkdir (file-name-directory final-output) t)
         (write-region rendered nil final-output)))))
