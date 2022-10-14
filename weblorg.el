@@ -1071,6 +1071,15 @@ pipeline again."
   "Build set of vars for template that depend on ROUTE."
   `(("route" . (("name" . ,(gethash :name route))))))
 
+(defun weblorg--template-file (route template)
+  (weblorg--template-find
+   (cons
+    ;; DEPRECATED[to be removed at 0.1.3]: we used to support a
+    ;; `templates` directory within the root of a website
+    (expand-file-name "templates" (gethash :base-dir route))
+    (weblorg--path route "templates"))
+   template))
+
 (defun weblorg--export-templates (route collections)
   "Walk through COLLECTIONS & render a template for each item on it.
 
@@ -1079,7 +1088,7 @@ can be found in the ROUTE."
   ;; Don't bother doing anything else if there are no input files
   (when collections
     ;; Add the route's main template to the environment
-    (let ((template (gethash :template route)))
+    (let* ((template (gethash :template route)))
       (if template
           (funcall (weblorg--route-importfn route)
                    (gethash :template-env route)
@@ -1099,12 +1108,16 @@ can be found in the ROUTE."
              ;; Render the full path
              (final-output
               (expand-file-name rendered-output (gethash :output-dir route)))
+             (template-file (weblorg--template-file route (gethash :template route)))
              file)
         (dolist (ap (cdar data))
           (when (equal (car ap) "file")
             (setq file (cdr ap))))
         (when (or (not (file-exists-p final-output))
                   (not file)
+                  (and template-file (file-exists-p template-file)
+                       (> (time-convert (file-attribute-modification-time (file-attributes template-file)) 'integer)
+                          (time-convert (file-attribute-modification-time (file-attributes final-output)) 'integer)))
                   (> (time-convert (file-attribute-modification-time (file-attributes file)) 'integer)
                      (time-convert (file-attribute-modification-time (file-attributes final-output)) 'integer)))
           (weblorg--log-info "writing: %s" final-output)
@@ -1202,6 +1215,7 @@ an INPUT-PATH to resolve relative links and INCLUDES from."
     (with-temp-buffer
       (insert input-data)
       (if input-path (set-visited-file-name input-path t t))
+      (set-buffer-modified-p nil)
       (org-html-export-as-html))
     ;; Uninstall advices
     (ad-unadvise 'org-html-template)
